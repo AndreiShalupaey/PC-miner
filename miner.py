@@ -1,8 +1,8 @@
 import socket
-import hashlib
-import uuid
-import datetime
 import os
+import hashlib
+
+from block import generate_block, read_block, genesis_block
 
 port = "9090"
 
@@ -18,7 +18,10 @@ while True:
             port = server_config_file.read()
             server_config_file.close()
             sock = socket.socket()
-            sock.bind(('', int(port)))
+            try:
+                sock.bind(('', int(port)))
+            except OSError:
+                print("Connection error")
             sock.listen(1)
             conn, conn_addr = sock.accept()
             print ('connected:' , conn_addr)
@@ -42,46 +45,23 @@ while True:
                     count = int(counter_file.read())
                     counter_file.close()
                     for i in range(count):
-                        transaction_file = open("blockchain/"+str(i+1), "r")
-                        transaction = str(transaction_file.read())
-                        transaction_file.close()
-                        for j in range(0, 64):
-                            hash_block = hash_block + transaction[j]
-                        for j in range(64,128):
-                            addres_sender = addres_sender + transaction[j]
-                        for j in range(128,192):
-                            addres_recipient = addres_recipient + transaction[j]
-                        for j in range(192,len(transaction)):
-                            cost = cost + transaction[j]
-                        previos_transaction_file = open("blockchain/"+str(i), "r")
-                        previous_block = previos_transaction_file.read()
-                        previos_transaction_file.close()
+                        hash_block = hash_block + read_block(i+1, "hash")
+                        addres_sender = addres_sender + read_block(i+1, "sender")
+                        addres_recipient = addres_recipient + read_block(i+1, "recipient")
+                        cost = cost + read_block(i+1, "cost")
+                        previous_block = read_block(i, "all")
                         if (hash_block != str(hashlib.sha256(previous_block.encode()).hexdigest())):
                             print("Wrong block!!!  " + str(i))
                             conn.close()
                             exit()
                         if (addres_recipient == addr):
-                            addres_cost = addres_cost + int(cost)
+                            addres_cost = addres_cost + float(cost)
                         if (addres_sender == addr):
-                            addres_cost = addres_cost - int(cost)
+                            addres_cost = addres_cost - float(cost)
                         addres_recipient = ""
                         addres_sender = ""
                         cost = ""
                         hash_block = ""
-                    config_miner_file = open("miner_config", "r")
-                    miner_addres = ""
-                    for i in range(0, 64):
-                        miner_addres = miner_addres + config_miner_file.read(i)
-                    config_miner_file.close()
-                    previos_transaction_file = open("blockchain/"+str(count), "r")
-                    previous_block = previos_transaction_file.read()
-                    previos_transaction_file.close()
-                    transaction_file = open("blockchain/" + str(count + 1), "w")
-                    transaction_file.write(str(hashlib.sha256(str(previous_block).encode()).hexdigest()) + "0000000000000000000000000000000000000000000000000000000000000000" + miner_addres + str(count))
-                    transaction_file.close()
-                    counter_file = open("blockchain/counter", "w")
-                    counter_file.write(str(count+1))
-                    counter_file.close()
                     conn.send(str(addres_cost).encode())
                     count = 0
                 if (data[0] == 's' and data[1] == 'e' and data[2] == 'n' and data[3] == 'd' and data[4] == " "):
@@ -89,50 +69,57 @@ while True:
                     addr_recipient = ""
                     cost_send = ""
                     count = 0
-                    for i in range(5, 69):
-                        addr_sender = addr_sender + data[i]
-                    for i in range(69, 133):
-                        addr_recipient = addr_recipient + data[i]
-                    for i in range(133, len(data)):
-                        cost_send = cost_send + data[i]
-                    counter_file = open("blockchain/counter", "r")
-                    count = int(counter_file.read())
-                    counter_file.close()
-                    counter_file = open("blockchain/counter", "w")
-                    counter_file.write(str(count+1))
-                    counter_file.close()
-                    count = count + 1
-                    previos_transaction_file = open("blockchain/"+str(count-1), "r")
-                    previous_block = previos_transaction_file.read()
-                    previos_transaction_file.close()
-                    transaction_file = open("blockchain/" + str(count), "w")
-                    transaction_file.write(str(hashlib.sha256(previous_block.encode()).hexdigest()) + addr_sender+addr_recipient+cost_send)
-                    transaction_file.close()
-                    print(addr_sender + " send " + cost_send + " coins to " + addr_recipient)
-                    addr_sender = ""
-                    addr_recipient = ""
-                    cost_send = ""
-                    count = 0
+                    commission = 0
+                    data, commission_str = data.split(":")
+                    commission = float(commission_str)
+                    if (commission > 0):
+                        for i in range(5, 69):
+                            addr_sender = addr_sender + data[i]
+                        for i in range(69, 133):
+                            addr_recipient = addr_recipient + data[i]
+                        for i in range(133, len(data)):
+                            cost_send = cost_send + data[i]
+                        counter_file = open("blockchain/counter", "r")
+                        count = int(counter_file.read())
+                        counter_file.close()
+                        generate_block(count+1, addr_sender, addr_recipient, str(float(cost_send)-commission))
+                        counter_file = open("blockchain/counter", "w")
+                        counter_file.write(str(count+1))
+                        counter_file.close()
+                        count = count + 1
+                        print(addr_sender + " send " + cost_send + " coins to " + addr_recipient)
+                        config_miner_file = open("miner_config", "r")
+                        miner_addres = ""
+                        for i in range(0, 64):
+                            miner_addres = miner_addres + config_miner_file.read(i)
+                        config_miner_file.close()
+                        counter_file = open("blockchain/counter", "w")
+                        generate_block(count+1, addr_sender, miner_addres, str(commission))
+                        counter_file.write(str(count+1))
+                        counter_file.close()
+                        count = count + 1
+                        generate_block(count+1, "0000000000000000000000000000000000000000000000000000000000000000", miner_addres, str(commission/100))
+                        counter_file = open("blockchain/counter", "w")
+                        counter_file.write(str(count+1))
+                        counter_file.close()
+                        count = count + 1
+                        addr_sender = ""
+                        addr_recipient = ""
+                        cost_send = ""
+                        count = 0
             conn.close()
     if (option == "2"):
         os.mkdir("blockchain/")
+        counter_file = open("blockchain/counter", "w")
+        counter_file.write("1")
+        counter_file.close()
+        genesis_block()
         config_miner_file = open("miner_config", "r")
         miner_addres = ""
         for i in range(0, 64):
             miner_addres = miner_addres + config_miner_file.read(i)
         config_miner_file.close()
-        counter_file = open("blockchain/counter", "w")
-        counter_file.write("1")
-        counter_file.close()
-        transaction_file = open("blockchain/0", "w")
-        transaction_file.write("First block in blockchain")
-        transaction_file.close()
-        transaction_file = open("blockchain/0", "r")
-        first_block = transaction_file.read()
-        transaction_file.close()
-        transaction_file = open("blockchain/1", "w")
-        transaction_file.write(str(hashlib.sha256(str(first_block).encode()).hexdigest()) + "0000000000000000000000000000000000000000000000000000000000000000" + miner_addres + "100")
-        transaction_file.close()
+        generate_block(1, "0000000000000000000000000000000000000000000000000000000000000000", miner_addres, str(10))
     if (option == "3"):
         addres_miner = input("input addres for miner: ")
         config_miner_file = open("miner_config", "w")
